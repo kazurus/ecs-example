@@ -1,23 +1,33 @@
+use std::fmt::Debug;
 use std::time::Duration;
 
 use bevy::app::{App, ScheduleRunnerSettings};
 use bevy::prelude::*;
 
 fn main() {
-    App::new()
-        .insert_resource(ScheduleRunnerSettings::run_loop(Duration::new(5, 0)))
-        .add_plugins(MinimalPlugins)
-        .init_resource::<ParserEventSource>()
-        .add_event::<Action>()
-        .add_startup_system(startup_system)
-        .add_systems(
+    let mut app = App::new();
+        app.insert_resource(ScheduleRunnerSettings::run_loop(Duration::new(5, 0)));
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<ParserEventSource>();
+        app.add_event::<Action>();
+        app.add_startup_system(startup_system);
+        app.add_systems(
             (
                 handle_parser_events,
                 greet_players,
             )
                 .chain(),
-        )
-        .run();
+        );
+        app.add_systems((
+                inspect_changes_system::<SeatNum>.in_base_set(CoreSet::PostUpdate),
+                inspect_changes_system::<Name>.in_base_set(CoreSet::PostUpdate),
+                greet_players.in_base_set(CoreSet::PostUpdate),
+        ));
+        // )
+        // .run();
+    app.update();
+    println!("Between update");
+    app.update();
 }
 
 #[derive(Debug)]
@@ -32,10 +42,10 @@ struct SeatUpdatedParams {
     npc: bool,
 }
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Debug)]
 struct Name(String);
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Debug)]
 struct SeatNum(u8);
 
 #[derive(Component)]
@@ -89,5 +99,16 @@ fn greet_players(query: Query<&Name, With<SeatNum>>) {
     println!("greet");
     for name in &query {
         println!("hello {}!", name.0);
+    }
+}
+
+fn inspect_changes_system<T: Component + Debug>(q: Query<Ref<T>>) {
+    // Iterate over each component of type `T` and log its changed status.
+    for val in &q {
+        if val.is_changed() {
+            println!("Value `{val:?}` was last changed at tick {}.", val.last_changed());
+        } else {
+            println!("Value `{val:?}` is unchanged.");
+        }
     }
 }
