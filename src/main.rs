@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use bevy::app::App;
+use bevy::ecs::archetype::Archetypes;
+use bevy::ecs::component::{ComponentId, Components};
 use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::prelude::*;
 
@@ -23,6 +25,11 @@ fn main() {
         inspect_changes_system::<GameType>.in_base_set(CoreSet::PostUpdate),
         inspect_changes_system::<GameLimit>.in_base_set(CoreSet::PostUpdate),
         inspect_changes_system::<DealerSeatNum>.in_base_set(CoreSet::PostUpdate),
+        // show_entity_state_system.in_base_set(CoreSet::PostUpdate),
+        show_all_players_system.in_base_set(CoreSet::PostUpdateFlush),
+        show_game_system
+            .after(show_all_players_system)
+            .in_base_set(CoreSet::PostUpdateFlush),
     ));
     // )
     // .run();
@@ -61,36 +68,28 @@ fn main() {
     let actions_vec = vec![Action::GameMaxSeatsSet(6), Action::GameDealerSeatNumSet(3)];
     apply_batch_actions_to_app(&mut app, actions_vec);
 
-    let actions_vec = vec![
-        Action::StackUpdated(StackUpdatedParams {
-            name: "adevlupec".into(),
-            stack: 53368,
-        }),
-    ];
+    let actions_vec = vec![Action::StackUpdated(StackUpdatedParams {
+        name: "adevlupec".into(),
+        stack: 53368,
+    })];
     apply_batch_actions_to_app(&mut app, actions_vec);
 
-    let actions_vec = vec![
-        Action::StackUpdated(StackUpdatedParams {
-            name: "Dette32".into(),
-            stack: 10845,
-        }),
-    ];
+    let actions_vec = vec![Action::StackUpdated(StackUpdatedParams {
+        name: "Dette32".into(),
+        stack: 10845,
+    })];
     apply_batch_actions_to_app(&mut app, actions_vec);
 
-    let actions_vec = vec![
-        Action::StackUpdated(StackUpdatedParams {
-            name: "Drug08".into(),
-            stack: 9686,
-        }),
-    ];
+    let actions_vec = vec![Action::StackUpdated(StackUpdatedParams {
+        name: "Drug08".into(),
+        stack: 9686,
+    })];
     apply_batch_actions_to_app(&mut app, actions_vec);
 
-    let actions_vec = vec![
-        Action::StackUpdated(StackUpdatedParams {
-            name: "FluffyStutt".into(),
-            stack: 11326,
-        }),
-    ];
+    let actions_vec = vec![Action::StackUpdated(StackUpdatedParams {
+        name: "FluffyStutt".into(),
+        stack: 11326,
+    })];
     apply_batch_actions_to_app(&mut app, actions_vec);
 }
 
@@ -185,7 +184,9 @@ fn handle_parser_events(
     mut game_entity: Local<Option<Entity>>,
     mut players_hmap: Local<Option<HashMap<String, Entity>>>,
 ) {
-    let game_entity = game_entity.get_or_insert_with(|| commands.spawn(Game).id()).to_owned();
+    let game_entity = game_entity
+        .get_or_insert_with(|| commands.spawn(Game).id())
+        .to_owned();
     let players_hmap = players_hmap.get_or_insert(Default::default());
 
     event_reader
@@ -271,4 +272,70 @@ fn inspect_changes_system<T: Component + Debug>(q: Query<Ref<T>>) {
             println!("Value `{val:?}` is unchanged.");
         }
     }
+}
+
+// -- For console history --
+fn show_all_players_system(
+    query: Query<
+        (
+            Entity,
+            Option<&PlayerName>,
+            Option<&PlayerSeatNum>,
+            Option<&PlayerStack>,
+            Option<&PlayerNpc>,
+            Option<&Dealer>,
+        ),
+        With<Player>,
+    >,
+) {
+    println!("----- Players ----------");
+    query.for_each(|val| println!("{val:?}"));
+    println!("========================");
+}
+
+fn show_game_system(
+    query: Query<
+        (
+            Entity,
+            Option<&GameType>,
+            Option<&GameLimit>,
+            Option<&GameHandId>,
+            Option<&GameMaxSeats>,
+            Option<&DealerSeatNum>,
+        ),
+        With<Game>,
+    >,
+) {
+    println!("----- Game ----------");
+    query.for_each(|val| println!("{val:?}"));
+    println!("========================");
+}
+
+fn show_entity_state_system(
+    archetypes: &Archetypes,
+    components: &Components,
+    entities: Query<Entity>,
+) {
+    for entity in &entities {
+        println!("----- start ----------");
+        println!("Entity: {:?}", entity);
+        for comp_id in get_components_for_entity(&entity, archetypes).unwrap() {
+            if let Some(comp_info) = components.get_info(comp_id) {
+                println!("Component: {:?}", comp_info);
+            }
+        }
+        println!("----- end ----------");
+    }
+}
+
+fn get_components_for_entity<'a>(
+    entity: &Entity,
+    archetypes: &'a Archetypes,
+) -> Option<impl Iterator<Item = ComponentId> + 'a> {
+    for archetype in archetypes.iter() {
+        if archetype.entities().iter().any(|e| e.entity() == *entity) {
+            return Some(archetype.components());
+        }
+    }
+    None
 }
