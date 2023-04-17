@@ -5,6 +5,7 @@ use bevy::app::App;
 use bevy::ecs::archetype::Archetypes;
 use bevy::ecs::component::{ComponentId, Components};
 use bevy::ecs::event::{Events, ManualEventReader};
+use bevy::ecs::query::QuerySingleError;
 use bevy::prelude::*;
 
 fn main() {
@@ -13,6 +14,12 @@ fn main() {
         .init_resource::<Events<Action>>()
         // .add_event::<Action>()
         .add_startup_system(startup_system)
+        .add_system(
+            read_parser_events_for_validation
+                .pipe(validate_board_cards)
+                .pipe(ignore)
+                .in_base_set(CoreSet::PreUpdate),
+        )
         .add_system(handle_parser_events)
         .add_systems(
             (
@@ -323,6 +330,68 @@ fn handle_parser_events(
         });
 
     println!("Events were handled");
+}
+
+fn read_parser_events_for_validation(
+    event_source: Res<Events<Action>>,
+    mut event_reader: Local<Option<ManualEventReader<Action>>>,
+) -> Vec<Action> {
+    event_reader
+        .get_or_insert_with(|| event_source.get_reader())
+        .iter(&event_source)
+        .map(|event| match event {
+            Action::GameHandIdSet(_) => {
+                println!("Validation Action::GameHandIdSet from event source");
+                Action::GameHandIdSet("111111".into())
+            }
+            Action::GameDealerSeatNumSet(_) => {
+                println!("Validation Action::GameDealerSeatNumSet from event source");
+                Action::GameDealerSeatNumSet(1)
+            }
+            _ => event.clone(),
+        })
+        .collect::<Vec<_>>()
+}
+
+fn validate_board_cards(
+    In(actions): In<Vec<Action>>,
+    players_cards_entities: Query<&PlayerCards>,
+    board_cards_entities: Query<&BoardCards>,
+) -> Vec<Action> {
+    actions.iter().for_each(|action| {
+        match action {
+            Action::CommunityCardsDealt(CommunityCardsDealtParams {
+                new_cards: cards, ..
+            })
+            | Action::NpcCardsDealt(NpcCardsDealtParams { cards, .. }) => {
+                println!("Validator validate_board_cards - {actions:?}");
+
+                let board_cards = match board_cards_entities.get_single() {
+                    Ok(board_cards_entity) => board_cards_entity.0.clone(),
+                    Err(QuerySingleError::MultipleEntities(_)) => {
+                        panic!("BoardCards should be single entity")
+                    }
+                    _ => vec![],
+                };
+
+                let all_known_cards = players_cards_entities.iter().fold(
+                    board_cards,
+                    |mut all_cards, player_cards| {
+                        all_cards.extend(player_cards.0.clone().into_iter());
+                        all_cards
+                    },
+                );
+
+                println!("Validator validate_board_cards - {all_known_cards:?} - all_known_cards");
+                if all_known_cards.iter().any(|card| cards.contains(card)) {
+                    println!("Validator validate_board_cards - {action:?} - has bad cards");
+                }
+            }
+            _ => (),
+        };
+    });
+
+    actions
 }
 
 fn inspect_changes_system<T: Component + Debug>(q: Query<Ref<T>>) {
