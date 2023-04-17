@@ -9,30 +9,22 @@ use bevy::prelude::*;
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-    app.init_resource::<Events<Action>>();
-    app.add_event::<Action>();
-    app.add_startup_system(startup_system);
-    app.add_system(handle_parser_events);
-    app.add_systems((
-        inspect_changes_system::<PlayerSeatNum>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<PlayerName>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<PlayerNpc>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<PlayerStack>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<Dealer>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<GameMaxSeats>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<GameHandId>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<GameType>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<GameLimit>.in_base_set(CoreSet::PostUpdate),
-        inspect_changes_system::<DealerSeatNum>.in_base_set(CoreSet::PostUpdate),
-        // show_entity_state_system.in_base_set(CoreSet::PostUpdate),
-        show_all_players_system.in_base_set(CoreSet::PostUpdateFlush),
-        show_game_system
-            .after(show_all_players_system)
-            .in_base_set(CoreSet::PostUpdateFlush),
-    ));
-    // )
-    // .run();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<Events<Action>>()
+        // .add_event::<Action>()
+        .add_startup_system(startup_system)
+        .add_system(handle_parser_events)
+        .add_systems(
+            (
+                show_all_players_system.in_base_set(CoreSet::PostUpdateFlush),
+                show_game_system.in_base_set(CoreSet::PostUpdateFlush),
+                show_board_system.in_base_set(CoreSet::PostUpdateFlush),
+            )
+                .chain(),
+        )
+        .add_systems((
+            // inspect_changes_system::<PlayerSeatNum>.in_base_set(CoreSet::PostUpdate),
+        ));
 
     let actions_vec = vec![
         Action::SeatUpdated(SeatUpdatedParams {
@@ -91,6 +83,19 @@ fn main() {
         stack: 11326,
     })];
     apply_batch_actions_to_app(&mut app, actions_vec);
+
+    let actions_vec = vec![Action::NpcCardsDealt(NpcCardsDealtParams {
+        name: "FluffyStutt".into(),
+        cards: vec![Card::H2, Card::SK],
+    })];
+    apply_batch_actions_to_app(&mut app, actions_vec);
+
+    let actions_vec = vec![Action::CommunityCardsDealt(CommunityCardsDealtParams {
+        prev_cards: vec![],
+        // new_cards: vec![Card::H8, Card::S7, Card::D8],
+        new_cards: vec![Card::H2, Card::S7, Card::D8],
+    })];
+    apply_batch_actions_to_app(&mut app, actions_vec);
 }
 
 fn apply_batch_actions_to_app(app: &mut App, actions: Vec<Action>) {
@@ -102,7 +107,7 @@ fn apply_batch_actions_to_app(app: &mut App, actions: Vec<Action>) {
 }
 
 // -- Action --
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Action {
     SeatUpdated(SeatUpdatedParams),
     StackUpdated(StackUpdatedParams),
@@ -112,19 +117,46 @@ enum Action {
     GameLimitSet(GameLimit),
     GameMaxSeatsSet(u8),
     GameDealerSeatNumSet(u8),
+    CommunityCardsDealt(CommunityCardsDealtParams),
+    NpcCardsDealt(NpcCardsDealtParams),
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 struct SeatUpdatedParams {
     name: String,
     seat_num: u8,
     npc: bool,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 struct StackUpdatedParams {
     name: String,
     stack: u64,
+}
+
+#[derive(Default, Debug, Clone)]
+struct CommunityCardsDealtParams {
+    prev_cards: Vec<Card>,
+    new_cards: Vec<Card>,
+}
+
+#[derive(Default, Debug, Clone)]
+struct NpcCardsDealtParams {
+    name: String,
+    cards: Vec<Card>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+enum Card {
+    H2,
+    H8,
+    HT,
+    S7,
+    SQ,
+    SK,
+    ST,
+    D8,
+    C2,
 }
 // -- Action end --
 
@@ -152,6 +184,14 @@ struct GameMaxSeats(u8);
 struct DealerSeatNum(u8);
 // -- Game end --
 
+// -- Board --
+#[derive(Component, Default, Debug)]
+struct Board;
+
+#[derive(Component, Default, Debug)]
+struct BoardCards(Vec<Card>);
+// -- Board end --
+
 // -- Player --
 #[derive(Component, Default, Debug)]
 struct Player;
@@ -169,6 +209,9 @@ struct PlayerNpc;
 struct PlayerStack(u64);
 
 #[derive(Component, Default, Debug)]
+struct PlayerCards(Vec<Card>);
+
+#[derive(Component, Default, Debug)]
 struct Dealer;
 // -- Player end --
 
@@ -182,15 +225,19 @@ fn handle_parser_events(
     players_entities: Query<(Entity, &PlayerSeatNum)>,
     mut event_reader: Local<Option<ManualEventReader<Action>>>,
     mut game_entity: Local<Option<Entity>>,
+    mut board_entity: Local<Option<Entity>>,
     mut players_hmap: Local<Option<HashMap<String, Entity>>>,
 ) {
     let game_entity = game_entity
         .get_or_insert_with(|| commands.spawn(Game).id())
         .to_owned();
-    let players_hmap = players_hmap.get_or_insert(Default::default());
+    let board_entity = board_entity
+        .get_or_insert_with(|| commands.spawn(Board).id())
+        .to_owned();
+    let players_hmap = players_hmap.get_or_insert_with(Default::default);
 
     event_reader
-        .get_or_insert(event_source.get_reader())
+        .get_or_insert_with(|| event_source.get_reader())
         .iter(&event_source)
         .for_each(|event| {
             match event {
@@ -254,6 +301,24 @@ fn handle_parser_events(
                         .expect("Can't find Player for updating stack");
                     commands.entity(*player_entity).insert(PlayerStack(*stack));
                 }
+                Action::NpcCardsDealt(NpcCardsDealtParams { name, cards }) => {
+                    let player_entity = players_hmap
+                        .get(name)
+                        .expect("Can't find Player for updating stack");
+                    commands
+                        .entity(*player_entity)
+                        .insert((PlayerNpc, PlayerCards(cards.clone())));
+                }
+                Action::CommunityCardsDealt(CommunityCardsDealtParams {
+                    prev_cards,
+                    new_cards,
+                }) => {
+                    let mut board_cards = prev_cards.clone();
+                    board_cards.extend(new_cards.clone().into_iter());
+                    commands
+                        .entity(board_entity)
+                        .insert(BoardCards(board_cards));
+                }
             };
         });
 
@@ -284,6 +349,7 @@ fn show_all_players_system(
             Option<&PlayerStack>,
             Option<&PlayerNpc>,
             Option<&Dealer>,
+            Option<&PlayerCards>,
         ),
         With<Player>,
     >,
@@ -307,6 +373,12 @@ fn show_game_system(
     >,
 ) {
     println!("----- Game ----------");
+    query.for_each(|val| println!("{val:?}"));
+    println!("========================");
+}
+
+fn show_board_system(query: Query<(Entity, Option<&BoardCards>), With<Board>>) {
+    println!("----- Board ----------");
     query.for_each(|val| println!("{val:?}"));
     println!("========================");
 }
